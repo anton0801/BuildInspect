@@ -155,6 +155,32 @@ struct DashboardView: View {
     }
 }
 
+struct UnavailableView: View {
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                Image(geometry.size.width > geometry.size.height ? "int_scr_land_bg" : "int_scr_bg")
+                    .resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .ignoresSafeArea()
+                
+                if geometry.size.width > geometry.size.height {
+                    Image("int_scr_alert")
+                        .resizable()
+                        .frame(width: 250, height: 220)
+                } else {
+                    Image("int_scr_alert")
+                        .resizable()
+                        .frame(width: 250, height: 220)
+                        .offset(x: 0, y: -200)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
 struct DashboardHeader: View {
     @EnvironmentObject var appState: AppState
     

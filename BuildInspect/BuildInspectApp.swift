@@ -2,28 +2,23 @@ import SwiftUI
 
 @main
 struct BuildInspectApp: App {
-    @StateObject private var appState = AppState()
-    @StateObject private var dataStore = DataStore.shared
+    
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(appState)
-                .environmentObject(dataStore)
-                .preferredColorScheme(appState.appTheme.colorScheme)
+            SplashView()
         }
     }
 }
 
 struct RootView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var showSplash = true
+    @StateObject private var appState = AppState()
+    @StateObject private var dataStore = DataStore.shared
     
     var body: some View {
         Group {
-            if showSplash {
-                SplashView(isShowing: $showSplash)
-            } else if !appState.hasCompletedOnboarding {
+            if !appState.hasCompletedOnboarding {
                 OnboardingContainerView()
             } else if !appState.isAuthenticated {
                 WelcomeView()
@@ -33,5 +28,8 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.4), value: appState.isAuthenticated)
         .animation(.easeInOut(duration: 0.4), value: appState.hasCompletedOnboarding)
+        .environmentObject(appState)
+        .environmentObject(dataStore)
+        .preferredColorScheme(appState.appTheme.colorScheme)
     }
 }

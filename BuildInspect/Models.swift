@@ -183,6 +183,84 @@ struct InspectionTask: Identifiable, Codable {
     var createdAt: Date = Date()
 }
 
+enum AppRequest {
+    case initialize
+    case handleTracking([String: Any])
+    case handleNavigation([String: Any])
+    case requestPermission
+    case deferPermission
+    case networkStatusChanged(Bool)
+    case timeout
+    case processValidation
+    case fetchAttribution(deviceID: String)
+    case fetchEndpoint(tracking: [String: Any])
+    case finalizeWithEndpoint(String)
+}
+
+enum AppResponse {
+    case initialized
+    case trackingStored([String: String])
+    case navigationStored([String: String])
+    case validationCompleted(Bool)
+    case attributionFetched([String: Any])
+    case endpointFetched(String)
+    case permissionGranted
+    case permissionDenied
+    case permissionDeferred
+    case navigateToMain
+    case navigateToWeb
+    case showPermissionPrompt
+    case hidePermissionPrompt
+    case showOfflineView
+    case hideOfflineView
+    case error(Error)
+}
+
+final class RequestContext {
+    var tracking: [String: String] = [:]
+    var navigation: [String: String] = [:]
+    var endpoint: String?
+    var mode: String?
+    var isFirstLaunch: Bool = true
+    var permission: PermissionData = .initial
+    var isLocked: Bool = false
+    var metadata: [String: Any] = [:]
+    
+    struct PermissionData {
+        var isGranted: Bool
+        var isDenied: Bool
+        var lastAsked: Date?
+        
+        var canAsk: Bool {
+            guard !isGranted && !isDenied else { return false }
+            if let date = lastAsked {
+                return Date().timeIntervalSince(date) / 86400 >= 3
+            }
+            return true
+        }
+        
+        static var initial: PermissionData {
+            PermissionData(isGranted: false, isDenied: false, lastAsked: nil)
+        }
+    }
+    
+    func isOrganic() -> Bool {
+        tracking["af_status"] == "Organic"
+    }
+    
+    func hasTracking() -> Bool {
+        !tracking.isEmpty
+    }
+}
+
+enum MiddlewareError: Error {
+    case validationFailed
+    case networkError
+    case invalidData
+    case timeout
+}
+
+
 // MARK: - Activity Model
 struct ActivityItem: Identifiable, Codable {
     var id: String = UUID().uuidString
